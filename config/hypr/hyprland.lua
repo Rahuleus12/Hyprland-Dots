@@ -166,11 +166,23 @@ hl.window_rule({ name = "dropdown-term", match = { class = "kitty-dropterm" }, f
 --  Dropterminal.sh) there's no need to manually detect the
 --  focused monitor and reposition the window each time.
 -- ═══════════════════════════════════════════════════════════
+
 local function toggle_dropdown()
     local ok, wins = pcall(hl.get_windows, { class = "kitty-dropterm" })
 
     if not ok or not wins or #wins == 0 then
-        hl.exec_cmd("kitty --class kitty-dropterm")
+        local mon = hl.get_active_monitor()
+            local w = math.floor(mon.width * 0.45 / mon.scale)
+            local h = math.floor(mon.height * 0.45 / mon.scale)
+            -- x: centered on screen
+            local x = math.floor((mon.width / mon.scale - w) / 2)
+            -- y: 5% from top (adjust 0.05 to taste: 0.02 = very high, 0.10 = lower)
+            local y = math.floor(mon.height * 0.05 / mon.scale)
+            hl.dispatch(hl.dsp.exec_cmd("kitty --class kitty-dropterm", {
+                float = true,
+                size  = w .. " " .. h,
+                move  = x .. " " .. y,
+            }))
         return
     end
 
