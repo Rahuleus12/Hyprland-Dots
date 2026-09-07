@@ -165,47 +165,43 @@ hl.window_rule({ name = "dropdown-term", match = { class = "kitty-dropterm" }, f
 --  whichever monitor is currently focused, so (unlike
 --  Dropterminal.sh) there's no need to manually detect the
 --  focused monitor and reposition the window each time.
+
+--  DROPDOWN FOLLOW — while the dropdown is OPEN it follows the
+--  active workspace. Hyprland fires workspace.active whenever
+--  the focused workspace changes; we just re-move the window
+--  there (follow=false so switching never steals focus onto
+--  the dropdown). If it's hidden in special:dropdown we leave
+--  it alone.
 -- ═══════════════════════════════════════════════════════════
 
-local function toggle_dropdown()
-    local ok, wins = pcall(hl.get_windows, { class = "kitty-dropterm" })
+local function follow_dropdown()
+    pcall(function()
+        local wins = hl.get_windows({ class = "kitty-dropterm" })
+        if not wins or #wins == 0 then return end
 
-    if not ok or not wins or #wins == 0 then
-        local mon = hl.get_active_monitor()
-            local w = math.floor(mon.width * 0.45 / mon.scale)
-            local h = math.floor(mon.height * 0.45 / mon.scale)
-            -- x: centered on screen
-            local x = math.floor((mon.width / mon.scale - w) / 2)
-            -- y: 5% from top (adjust 0.05 to taste: 0.02 = very high, 0.10 = lower)
-            local y = math.floor(mon.height * 0.05 / mon.scale)
-            hl.dispatch(hl.dsp.exec_cmd("kitty --class kitty-dropterm", {
-                float = true,
-                size  = w .. " " .. h,
-                move  = x .. " " .. y,
-            }))
-        return
-    end
+        local win = wins[1]
+        if not win or not win.workspace or not win.workspace.name then return end
+        -- Tucked away in special:dropdown = closed, leave it hidden.
+        if win.workspace.name == "special:dropdown" then return end
 
-    local win = wins[1]
-
-    if win.workspace.name == "special:dropdown" then
-        -- Pull dropdown onto the workspace we're currently using.
         local active = hl.get_active_workspace()
+        if not active or not active.name then return end
+        -- Don't yank it around while the user is viewing a special workspace.
+        if active.name:sub(1, 8) == "special:" then return end
+
+        if win.workspace.name == active.name then return end
 
         hl.dispatch(hl.dsp.window.move({
             window = win,
             workspace = active.name,
-            follow = true
-        }))
-    else
-        -- Put it back into the special workspace.
-        hl.dispatch(hl.dsp.window.move({
-            window = win,
-            workspace = "special:dropdown",
             follow = false
         }))
-    end
+    end)
 end
+
+-- pcall-wrapped so an unknown event name can never break config load;
+-- a double fire is harmless (the 2nd move is a no-op).
+pcall(function() hl.on("workspace.active", follow_dropdown) end)
 
 -- ═══════════════════════════════════════════════════════════
 --  KEYBINDS
