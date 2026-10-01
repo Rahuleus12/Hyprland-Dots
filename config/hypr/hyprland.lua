@@ -144,7 +144,7 @@ hl.animation({ leaf = "windows",    enabled = true, speed = 5,   bezier = "bounc
 
 -- ─── window rules ─────────────────────────────────────────
 hl.window_rule({ name = "email-ws",      workspace = "1",        match = { class = [[^([Tt]hunderbird|org\.gnome\.Evolution|eu\.betterbird\.Betterbird)$]] } })
-hl.window_rule({ name = "browser-ws",    workspace = "2",        match = { class = [[^([Ff]irefox|org\.mozilla\.firefox|google-chrome(-beta|-dev|-unstable)?|chrome-.+-Default|[Cc]hromium|Brave-browser(-beta|-dev|-unstable)?|[Tt]horium-browser|zen)$]] } })
+hl.window_rule({ name = "browser-ws",    workspace = "2",        match = { class = [[^([Ff]irefox|org\.mozilla\.firefox|google-chrome(-beta|-dev|-unstable)?|chrome-.+-Default|[Cc]hromium|Brave-browser(-beta|-dev|-unstable)?|[Tt]horium-browser|[Zz]en|[Hh]elium)$]] } })
 hl.window_rule({ name = "screenshare-ws",workspace = "4 silent", match = { class = [[^(com\.obsproject\.Studio)$]] } })
 hl.window_rule({ name = "gamestore-ws",  workspace = "5",        match = { class = [[^([Ss]team|com\.heroicgameslauncher\.hgl)$]] } })
 hl.window_rule({ name = "virtmgr-ws",    workspace = "6 silent", match = { class = [[^(virt-manager|org\.virt-manager\.virt-manager)$]] } })
@@ -152,55 +152,167 @@ hl.window_rule({ name = "im-ws",         workspace = "7",        match = { class
 hl.window_rule({ name = "games-ws",      workspace = "8",        match = { class = [[^(gamescope|steam_app_\d+)$]] } })
 hl.window_rule({ name = "media-ws",      workspace = "9 silent", match = { class = [[^([Aa]udacious|[Mm]pv|vlc)$]] } })
 
--- Dropdown terminal window rule — spawns silently on special:dropdown
--- size/position mirror Dropterminal.sh: WIDTH_PERCENT=65, HEIGHT_PERCENT=65,
--- Y_PERCENT=10 (centered horizontally, sitting 10% down from the top —
--- NOT dead-center, which is what `center = true` used to give it).
-hl.window_rule({ name = "dropdown-term", match = { class = "kitty-dropterm" }, float = true, size = "50% 50%", move = "(monitor_w-window_w)/2 monitor_h*0.10", workspace = "special:dropdown silent" })
+-- (dropdown-terminal rule now lives inside the FLOATING TERMINAL
+-- block below, so all of its knobs stay in one place)
+
+-- ═══════════════════════════════════════════════════════
+--  FLOATING TERMINAL (kitty-dropterm, Super+Shift+Return)
+--
+--  Fully self-contained: rule included, nothing outside
+--  this block.
+--
+--  Size:  kitty arrives already sized (pixel overrides built
+--         here). The compositor's `size` path is bypassed
+--         entirely — that was the flaky piece.
+--  Move:  windowrule `move` EXPRESSION (centered X, TOP_GAP
+--         down from the top). NOTE: this build parses rule
+--         values as math expressions — percent strings like
+--         "55% 45%" throw `Unexpected token "%"` in
+--         hyprland.log and get silently dropped, which is why
+--         the terminal used to land dead-center instead of
+--         near the top.
+--  Hide:  moved to special:dropdown on demand — no rule
+--         needed to park it at spawn anymore.
+--
+--  1st press: spawns visibly on the current workspace, focused.
+--  Later presses: hide / show. While shown, it follows the
+--  active workspace.
+-- ═══════════════════════════════════════════════════════════
+
+local TERM_CLASS  = "kitty-dropterm"
+local SPECIAL_NAME = "special:dropdown"
+
+-- ── Geometry knobs ─────────────────────────────────────────
+local SIZE_W_PCT  = 55     -- width  = 55% of screen width
+local SIZE_H_PCT  = 45     -- height = 45% of screen height
+local TOP_GAP_PCT = 4      -- top edge 4% down the screen
+                           -- (≈43px on 1080p — just under the
+                           -- ~36px waybar; 2% = 21px hides
+                           -- behind it)
+
+-- Divide the monitor's reported size by its scale before the
+-- % math. Flip to false only if the terminal comes out far
+-- too small — that means the report is already logical px.
+local DIVIDE_BY_SCALE = true
+
+-- Float + top-center placement. Expression syntax only —
+-- `(monitor_w-window_w)/2` centers X on the window; percent
+-- forms are rejected by this build (see header note).
+hl.window_rule({
+    name  = "dropdown-term",
+    match = { class = TERM_CLASS },
+    float = true,
+    move  = string.format("(monitor_w-window_w)/2 monitor_h*%.2f", TOP_GAP_PCT / 100),
+})
+
+local SPAWN_LOCKOUT = 1    -- seconds; blocks double-spawn
+local last_spawn    = 0
+
+-- ── Spawn ──────────────────────────────────────────────────
+local function build_kitty_cmd()
+    local cmd = "kitty --class kitty-dropterm"
+        .. " --override remember_window_size=no"
+
+    local ok, mon = pcall(hl.get_active_monitor)
+    if ok and mon and mon.width and mon.height then
+        local scale = (mon.scale and mon.scale > 0) and mon.scale or 1
+        local lw = DIVIDE_BY_SCALE and (mon.width  / scale) or mon.width
+        local lh = DIVIDE_BY_SCALE and (mon.height / scale) or mon.height
+
+        -- Plain integers, NO "p" suffix. This kitty build parses
+        -- these keys with a bare int() (pixels); the "Np"/"Nc"
+        -- suffix forms are newer-kitty syntax it rejects.
+        cmd = cmd
+            .. " --override initial_window_width="
+            ..  math.floor(lw * SIZE_W_PCT / 100)
+            .. " --override initial_window_height="
+            ..  math.floor(lh * SIZE_H_PCT / 100)
+    end
+    -- Monitor query failed → no size overrides; kitty uses its
+    -- own defaults rather than erroring out.
+    return cmd
+end
+
+local function spawn_dropdown()
+    if (os.time() - last_spawn) < SPAWN_LOCKOUT then return end
+    last_spawn = os.time()
+
+    -- NOTE: no `move`/`size` options here — both were percent
+    -- strings this build can't parse (hyprland.log: "failed to
+    -- parse 50.0% 2% as an expression"). Float comes from the
+    -- windowrule, size from kitty's own overrides.
+    pcall(hl.dispatch, hl.dsp.exec_cmd(build_kitty_cmd(), { float = true }))
+end
 
 -- ═══════════════════════════════════════════════════════════
---  FLOATING TERMINAL — uses native toggle_special dispatcher
---  No hyprctl/IPC needed, no deadlock.
---  Hyprland's togglespecialworkspace already shows/hides on
---  whichever monitor is currently focused, so (unlike
---  Dropterminal.sh) there's no need to manually detect the
---  focused monitor and reposition the window each time.
+--  TOGGLE
+-- ═══════════════════════════════════════════════════════════
 
---  DROPDOWN FOLLOW — while the dropdown is OPEN it follows the
---  active workspace. Hyprland fires workspace.active whenever
---  the focused workspace changes; we just re-move the window
---  there (follow=false so switching never steals focus onto
---  the dropdown). If it's hidden in special:dropdown we leave
---  it alone.
+local function toggle_dropdown()
+    local ok, wins = pcall(hl.get_windows, { class = TERM_CLASS })
+
+    if not ok or not wins or #wins == 0 then
+        spawn_dropdown()
+        return
+    end
+
+    local win     = wins[1]
+    local ws_name = win.workspace and win.workspace.name
+
+    if ws_name == SPECIAL_NAME then
+        -- Hidden → pull it onto the workspace we're on now.
+        local active = hl.get_active_workspace()
+        if not active or not active.name then return end
+
+        hl.dispatch(hl.dsp.window.move({
+            window    = win,
+            workspace = active.name,
+            follow    = true,
+        }))
+    else
+        -- Visible → tuck it back into the special workspace.
+        hl.dispatch(hl.dsp.window.move({
+            window    = win,
+            workspace = SPECIAL_NAME,
+            follow    = false,
+        }))
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════
+--  DROPDOWN FOLLOW — while open, trails the active workspace.
 -- ═══════════════════════════════════════════════════════════
 
 local function follow_dropdown()
     pcall(function()
-        local wins = hl.get_windows({ class = "kitty-dropterm" })
+        local wins = hl.get_windows({ class = TERM_CLASS })
         if not wins or #wins == 0 then return end
 
-        local win = wins[1]
-        if not win or not win.workspace or not win.workspace.name then return end
-        -- Tucked away in special:dropdown = closed, leave it hidden.
-        if win.workspace.name == "special:dropdown" then return end
+        local win     = wins[1]
+        local ws_name = win.workspace and win.workspace.name
+        if not ws_name then return end
+
+        -- Tucked away = closed. Leave it hidden.
+        if ws_name == SPECIAL_NAME then return end
 
         local active = hl.get_active_workspace()
         if not active or not active.name then return end
-        -- Don't yank it around while the user is viewing a special workspace.
+
+        -- Never yank it while the user is on a special workspace.
         if active.name:sub(1, 8) == "special:" then return end
 
-        if win.workspace.name == active.name then return end
+        -- Already where it belongs.
+        if ws_name == active.name then return end
 
         hl.dispatch(hl.dsp.window.move({
-            window = win,
+            window    = win,
             workspace = active.name,
-            follow = false
+            follow    = false,
         }))
     end)
 end
 
--- pcall-wrapped so an unknown event name can never break config load;
--- a double fire is harmless (the 2nd move is a no-op).
+-- pcall-wrapped so an unknown event name can never break load.
 pcall(function() hl.on("workspace.active", follow_dropdown) end)
 
 -- ═══════════════════════════════════════════════════════════
@@ -215,7 +327,10 @@ hl.bind("CTRL + ALT + L", hl.dsp.exec_cmd(scriptsDir .. "/LockScreen.sh"))
 hl.bind("CTRL + ALT + P", hl.dsp.exec_cmd(scriptsDir .. "/Wlogout.sh"))
 hl.bind(mainMod .. " + SHIFT + N", hl.dsp.exec_cmd("swaync-client -t -sw"))
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(scriptsDir .. "/Kool_Quick_Settings.sh"))
+-- Alt+Tab: cycle to next window
 hl.bind("ALT + Tab",       hl.dsp.window.cycle_next())
+
+-- Alt+Shift+Tab: cycle to previous window
 hl.bind("ALT + SHIFT + Tab", hl.dsp.window.cycle_next({ next = false }))
 
 -- Master / Dwindle
