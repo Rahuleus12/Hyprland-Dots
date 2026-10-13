@@ -81,6 +81,8 @@ hl.on("hyprland.start", function()
     hl.dispatch(hl.dsp.exec_cmd(UserScripts .. "/RainbowBorders.sh"))
     hl.dispatch(hl.dsp.exec_cmd("hypridle"))
     hl.dispatch(hl.dsp.exec_cmd(scriptsDir .. "/Hyprsunset.sh init"))
+    -- power: 60Hz + power-saver on battery, max refresh + balanced on AC
+    hl.dispatch(hl.dsp.exec_cmd(scriptsDir .. "/PowerMode.sh"))
 end)
 
 -- ─── settings ─────────────────────────────────────────────
