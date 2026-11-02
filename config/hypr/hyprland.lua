@@ -36,7 +36,6 @@ hl.env("EDITOR", "nvim")
 
 -- ─── autostart ────────────────────────────────────────────
 -- Phase 1: environment setup — MUST complete before apps launch.
--- Using os.execute (blocking) so dbus/systemd are ready first.
 os.execute("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=Hyprland 2>/dev/null")
 os.execute("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP 2>/dev/null")
 os.execute("systemctl --user start graphical-session-bind.service 2>/dev/null")
@@ -44,27 +43,7 @@ os.execute("systemctl --user start graphical-session-bind.service 2>/dev/null")
 -- Patch wlogout: use pkill instead of hyprctl dispatch (bypasses broken IPC)
 os.execute("sed -i 's|hyprctl dispatch exit 0|pkill -TERM -x Hyprland|; s|loginctl terminate-session|pkill -TERM -x Hyprland|' " .. home .. "/.config/wlogout/layout 2>/dev/null")
 
--- ═══════════════════════════════════════════════════════════
---  WAYBAR WORKSPACE CLICKING — IMPORTANT NOTE
--- ═══════════════════════════════════════════════════════════
--- Waybar v0.15.0's hyprland/workspaces module sends old-style
--- dispatcher strings ("dispatch workspace N") over IPC.
--- With Lua config, hyprctl dispatch parses arguments as Lua,
--- so "workspace 2" becomes "hl.dispatch(workspace 2)" which
--- is a syntax error.
---
--- This CANNOT be fixed from this Lua file. You have 3 options:
--- 1. Use waybar-git (has the fix merged)
--- 2. Switch Waybar config to use "wlr/workspaces" instead of
---    "hyprland/workspaces" (uses Wayland protocol, not hyprctl)
--- 3. Build Waybar from source with the Lua-dispatch patch
---
--- The old timer+file-polling workaround has been removed
--- because hyprland/workspaces handles clicks internally in
--- C++ and ignores any "on-click" config on workspace buttons.
--- ═══════════════════════════════════════════════════════════
-
--- Phase 2: apps — launched immediately (dbus/systemd already done via os.execute above)
+-- Phase 2: apps — launched immediately
 hl.on("hyprland.start", function()
     hl.dispatch(hl.dsp.exec_cmd(scriptsDir .. "/KeybindsLayoutInit.sh"))
     hl.dispatch(hl.dsp.exec_cmd("awww-daemon --format xrgb"))
@@ -81,8 +60,6 @@ hl.on("hyprland.start", function()
     hl.dispatch(hl.dsp.exec_cmd(UserScripts .. "/RainbowBorders.sh"))
     hl.dispatch(hl.dsp.exec_cmd("hypridle"))
     hl.dispatch(hl.dsp.exec_cmd(scriptsDir .. "/Hyprsunset.sh init"))
-    -- power: 60Hz + power-saver on battery, max refresh + balanced on AC
-    hl.dispatch(hl.dsp.exec_cmd(scriptsDir .. "/PowerMode.sh"))
 end)
 
 -- ─── settings ─────────────────────────────────────────────
@@ -98,8 +75,17 @@ hl.config({
         shadow = { enabled = true, range = 3, render_power = 1, color = "rgb(8D7272)" },
         blur = { enabled = true, size = 6, passes = 2, ignore_opacity = true, new_optimizations = true, special = true, popups = true },
     },
-    dwindle = { preserve_split = true, special_scale_factor = 0.8 },
-    master = { new_status = "master", new_on_top = true, mfact = 0.5 },
+    -- UPDATED: Added special_scale_factor
+    dwindle = {
+        preserve_split = true,
+        special_scale_factor = 0.8,
+    },
+    -- UPDATED: Added new_status = "master" (modern replacement for new_is_master)
+    master = {
+        new_status = "master",
+        new_on_top = true,
+        mfact = 0.5,
+    },
     input = {
         kb_layout = "us", kb_variant = "", kb_model = "", kb_options = "", kb_rules = "",
         repeat_rate = 50, repeat_delay = 300, sensitivity = 0,
@@ -135,71 +121,37 @@ hl.curve("winOut",   { type = "bezier", points = { {0.3, -0.3}, {0, 1} } })
 hl.curve("slow",     { type = "bezier", points = { {0, 0.85}, {0.3, 1} } })
 hl.curve("overshot", { type = "bezier", points = { {0.7, 0.6}, {0.1, 1.1} } })
 hl.curve("bounce",   { type = "bezier", points = { {1.1, 1.6}, {0.1, 0.85} } })
-hl.animation({ leaf = "windowsIn",  enabled = true, speed = 5,   bezier = "slow",    style = "popin" })
-hl.animation({ leaf = "windowsOut", enabled = true, speed = 5,   bezier = "winOut",  style = "popin" })
-hl.animation({ leaf = "windowsMove",enabled = true, speed = 5,   bezier = "wind",    style = "slide" })
-hl.animation({ leaf = "border",     enabled = true, speed = 10,  bezier = "linear" })
+hl.animation({ leaf = "windowsIn",   enabled = true, speed = 5,  bezier = "slow",    style = "popin" })
+hl.animation({ leaf = "windowsOut",  enabled = true, speed = 5,  bezier = "winOut",  style = "popin" })
+hl.animation({ leaf = "windowsMove", enabled = true, speed = 5,  bezier = "wind",    style = "slide" })
+hl.animation({ leaf = "border",      enabled = true, speed = 10, bezier = "linear" })
 hl.animation({ leaf = "borderangle", enabled = true, speed = 90, bezier = "linear", style = "loop" })
-hl.animation({ leaf = "fade",       enabled = true, speed = 5,   bezier = "overshot" })
-hl.animation({ leaf = "workspaces", enabled = true, speed = 5,   bezier = "wind" })
-hl.animation({ leaf = "windows",    enabled = true, speed = 5,   bezier = "bounce",  style = "popin" })
+hl.animation({ leaf = "fade",        enabled = true, speed = 5,  bezier = "overshot" })
+hl.animation({ leaf = "workspaces",  enabled = true, speed = 5,  bezier = "wind" })
+hl.animation({ leaf = "windows",     enabled = true, speed = 5,  bezier = "bounce",  style = "popin" })
 
 -- ─── window rules ─────────────────────────────────────────
-hl.window_rule({ name = "email-ws",      workspace = "1",        match = { class = [[^([Tt]hunderbird|org\.gnome\.Evolution|eu\.betterbird\.Betterbird)$]] } })
-hl.window_rule({ name = "browser-ws",    workspace = "2",        match = { class = [[^([Ff]irefox|org\.mozilla\.firefox|google-chrome(-beta|-dev|-unstable)?|chrome-.+-Default|[Cc]hromium|Brave-browser(-beta|-dev|-unstable)?|[Tt]horium-browser|[Zz]en|[Hh]elium)$]] } })
-hl.window_rule({ name = "screenshare-ws",workspace = "4 silent", match = { class = [[^(com\.obsproject\.Studio)$]] } })
-hl.window_rule({ name = "gamestore-ws",  workspace = "5",        match = { class = [[^([Ss]team|com\.heroicgameslauncher\.hgl)$]] } })
-hl.window_rule({ name = "virtmgr-ws",    workspace = "6 silent", match = { class = [[^(virt-manager|org\.virt-manager\.virt-manager)$]] } })
-hl.window_rule({ name = "im-ws",         workspace = "7",        match = { class = [[^([Dd]iscord|[Ww]ebCord|[Vv]esktop|[Ff]erdium|[Ww]hatsapp-for-linux|org\.telegram\.desktop|teams-for-linux|Element)$]] } })
-hl.window_rule({ name = "games-ws",      workspace = "8",        match = { class = [[^(gamescope|steam_app_\d+)$]] } })
-hl.window_rule({ name = "media-ws",      workspace = "9 silent", match = { class = [[^([Aa]udacious|[Mm]pv|vlc)$]] } })
-
--- (dropdown-terminal rule now lives inside the FLOATING TERMINAL
--- block below, so all of its knobs stay in one place)
+hl.window_rule({ name = "email-ws",       workspace = "1",        match = { class = [[^([Tt]hunderbird|org\.gnome\.Evolution|eu\.betterbird\.Betterbird)$]] } })
+hl.window_rule({ name = "browser-ws",     workspace = "2",        match = { class = [[^([Ff]irefox|org\.mozilla\.firefox|google-chrome(-beta|-dev|-unstable)?|chrome-.+-Default|[Cc]hromium|Brave-browser(-beta|-dev|-unstable)?|[Tt]horium-browser|[Zz]en|[Hh]elium)$]] } })
+hl.window_rule({ name = "screenshare-ws", workspace = "4 silent", match = { class = [[^(com\.obsproject\.Studio)$]] } })
+hl.window_rule({ name = "gamestore-ws",   workspace = "5",        match = { class = [[^([Ss]team|com\.heroicgameslauncher\.hgl)$]] } })
+hl.window_rule({ name = "virtmgr-ws",     workspace = "6 silent", match = { class = [[^(virt-manager|org\.virt-manager\.virt-manager)$]] } })
+hl.window_rule({ name = "im-ws",          workspace = "7",        match = { class = [[^([Dd]iscord|[Ww]ebCord|[Vv]esktop|[Ff]erdium|[Ww]hatsapp-for-linux|org\.telegram\.desktop|teams-for-linux|Element)$]] } })
+hl.window_rule({ name = "games-ws",       workspace = "8",        match = { class = [[^(gamescope|steam_app_\d+)$]] } })
+hl.window_rule({ name = "media-ws",       workspace = "9 silent", match = { class = [[^([Aa]udacious|[Mm]pv|vlc)$]] } })
 
 -- ═══════════════════════════════════════════════════════
 --  FLOATING TERMINAL (kitty-dropterm, Super+Shift+Return)
---
---  Fully self-contained: rule included, nothing outside
---  this block.
---
---  Size:  kitty arrives already sized (pixel overrides built
---         here). The compositor's `size` path is bypassed
---         entirely — that was the flaky piece.
---  Move:  windowrule `move` EXPRESSION (centered X, TOP_GAP
---         down from the top). NOTE: this build parses rule
---         values as math expressions — percent strings like
---         "55% 45%" throw `Unexpected token "%"` in
---         hyprland.log and get silently dropped, which is why
---         the terminal used to land dead-center instead of
---         near the top.
---  Hide:  moved to special:dropdown on demand — no rule
---         needed to park it at spawn anymore.
---
---  1st press: spawns visibly on the current workspace, focused.
---  Later presses: hide / show. While shown, it follows the
---  active workspace.
--- ═══════════════════════════════════════════════════════════
-
-local TERM_CLASS  = "kitty-dropterm"
+-- ═══════════════════════════════════════════════════════
+local TERM_CLASS   = "kitty-dropterm"
 local SPECIAL_NAME = "special:dropdown"
-
--- ── Geometry knobs ─────────────────────────────────────────
-local SIZE_W_PCT  = 55     -- width  = 55% of screen width
-local SIZE_H_PCT  = 45     -- height = 45% of screen height
-local TOP_GAP_PCT = 4      -- top edge 4% down the screen
-                           -- (≈43px on 1080p — just under the
-                           -- ~36px waybar; 2% = 21px hides
-                           -- behind it)
-
--- Divide the monitor's reported size by its scale before the
--- % math. Flip to false only if the terminal comes out far
--- too small — that means the report is already logical px.
+local SIZE_W_PCT   = 55
+local SIZE_H_PCT   = 45
+local TOP_GAP_PCT  = 4
 local DIVIDE_BY_SCALE = true
+local SPAWN_LOCKOUT = 1
+local last_spawn    = 0
 
--- Float + top-center placement. Expression syntax only —
--- `(monitor_w-window_w)/2` centers X on the window; percent
--- forms are rejected by this build (see header note).
 hl.window_rule({
     name  = "dropdown-term",
     match = { class = TERM_CLASS },
@@ -207,119 +159,61 @@ hl.window_rule({
     move  = string.format("(monitor_w-window_w)/2 monitor_h*%.2f", TOP_GAP_PCT / 100),
 })
 
-local SPAWN_LOCKOUT = 1    -- seconds; blocks double-spawn
-local last_spawn    = 0
-
--- ── Spawn ──────────────────────────────────────────────────
 local function build_kitty_cmd()
-    local cmd = "kitty --class kitty-dropterm"
-        .. " --override remember_window_size=no"
-
+    local cmd = "kitty --class kitty-dropterm --override remember_window_size=no"
     local ok, mon = pcall(hl.get_active_monitor)
     if ok and mon and mon.width and mon.height then
         local scale = (mon.scale and mon.scale > 0) and mon.scale or 1
         local lw = DIVIDE_BY_SCALE and (mon.width  / scale) or mon.width
         local lh = DIVIDE_BY_SCALE and (mon.height / scale) or mon.height
-
-        -- Plain integers, NO "p" suffix. This kitty build parses
-        -- these keys with a bare int() (pixels); the "Np"/"Nc"
-        -- suffix forms are newer-kitty syntax it rejects.
-        cmd = cmd
-            .. " --override initial_window_width="
-            ..  math.floor(lw * SIZE_W_PCT / 100)
-            .. " --override initial_window_height="
-            ..  math.floor(lh * SIZE_H_PCT / 100)
+        cmd = cmd .. " --override initial_window_width=" .. math.floor(lw * SIZE_W_PCT / 100)
+                 .. " --override initial_window_height=" .. math.floor(lh * SIZE_H_PCT / 100)
     end
-    -- Monitor query failed → no size overrides; kitty uses its
-    -- own defaults rather than erroring out.
     return cmd
 end
 
 local function spawn_dropdown()
     if (os.time() - last_spawn) < SPAWN_LOCKOUT then return end
     last_spawn = os.time()
-
-    -- NOTE: no `move`/`size` options here — both were percent
-    -- strings this build can't parse (hyprland.log: "failed to
-    -- parse 50.0% 2% as an expression"). Float comes from the
-    -- windowrule, size from kitty's own overrides.
     pcall(hl.dispatch, hl.dsp.exec_cmd(build_kitty_cmd(), { float = true }))
 end
 
--- ═══════════════════════════════════════════════════════════
---  TOGGLE
--- ═══════════════════════════════════════════════════════════
-
 local function toggle_dropdown()
     local ok, wins = pcall(hl.get_windows, { class = TERM_CLASS })
-
     if not ok or not wins or #wins == 0 then
         spawn_dropdown()
         return
     end
-
     local win     = wins[1]
     local ws_name = win.workspace and win.workspace.name
 
     if ws_name == SPECIAL_NAME then
-        -- Hidden → pull it onto the workspace we're on now.
         local active = hl.get_active_workspace()
         if not active or not active.name then return end
-
-        hl.dispatch(hl.dsp.window.move({
-            window    = win,
-            workspace = active.name,
-            follow    = true,
-        }))
+        hl.dispatch(hl.dsp.window.move({ window = win, workspace = active.name, follow = true }))
     else
-        -- Visible → tuck it back into the special workspace.
-        hl.dispatch(hl.dsp.window.move({
-            window    = win,
-            workspace = SPECIAL_NAME,
-            follow    = false,
-        }))
+        hl.dispatch(hl.dsp.window.move({ window = win, workspace = SPECIAL_NAME, follow = false }))
     end
 end
-
--- ═══════════════════════════════════════════════════════════
---  DROPDOWN FOLLOW — while open, trails the active workspace.
--- ═══════════════════════════════════════════════════════════
 
 local function follow_dropdown()
     pcall(function()
         local wins = hl.get_windows({ class = TERM_CLASS })
         if not wins or #wins == 0 then return end
-
         local win     = wins[1]
         local ws_name = win.workspace and win.workspace.name
-        if not ws_name then return end
-
-        -- Tucked away = closed. Leave it hidden.
-        if ws_name == SPECIAL_NAME then return end
-
+        if not ws_name or ws_name == SPECIAL_NAME then return end
         local active = hl.get_active_workspace()
-        if not active or not active.name then return end
-
-        -- Never yank it while the user is on a special workspace.
-        if active.name:sub(1, 8) == "special:" then return end
-
-        -- Already where it belongs.
+        if not active or not active.name or active.name:sub(1, 8) == "special:" then return end
         if ws_name == active.name then return end
-
-        hl.dispatch(hl.dsp.window.move({
-            window    = win,
-            workspace = active.name,
-            follow    = false,
-        }))
+        hl.dispatch(hl.dsp.window.move({ window = win, workspace = active.name, follow = false }))
     end)
 end
-
--- pcall-wrapped so an unknown event name can never break load.
 pcall(function() hl.on("workspace.active", follow_dropdown) end)
 
--- ═══════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════
 --  KEYBINDS
--- ═══════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════
 
 -- System
 hl.bind("CTRL + ALT + Delete", hl.dsp.exit())
@@ -329,10 +223,7 @@ hl.bind("CTRL + ALT + L", hl.dsp.exec_cmd(scriptsDir .. "/LockScreen.sh"))
 hl.bind("CTRL + ALT + P", hl.dsp.exec_cmd(scriptsDir .. "/Wlogout.sh"))
 hl.bind(mainMod .. " + SHIFT + N", hl.dsp.exec_cmd("swaync-client -t -sw"))
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(scriptsDir .. "/Kool_Quick_Settings.sh"))
--- Alt+Tab: cycle to next window
-hl.bind("ALT + Tab",       hl.dsp.window.cycle_next())
-
--- Alt+Shift+Tab: cycle to previous window
+hl.bind("ALT + Tab", hl.dsp.window.cycle_next())
 hl.bind("ALT + SHIFT + Tab", hl.dsp.window.cycle_next({ next = false }))
 
 -- Master / Dwindle
@@ -353,7 +244,7 @@ hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(term))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(files))
 hl.bind(mainMod .. " + H", hl.dsp.exec_cmd(scriptsDir .. "/KeyHints.sh"))
 
--- ─── floating terminal (Super+Shift+Return) ───────────────
+-- Floating terminal
 hl.bind(mainMod .. " + SHIFT + Return", toggle_dropdown)
 
 -- Fullscreen / Float
@@ -367,7 +258,31 @@ hl.bind(mainMod .. " + ALT + E", hl.dsp.exec_cmd(scriptsDir .. "/RofiEmoji.sh"))
 hl.bind(mainMod .. " + S", hl.dsp.exec_cmd(scriptsDir .. "/RofiSearch.sh"))
 hl.bind(mainMod .. " + ALT + O", hl.dsp.exec_cmd(scriptsDir .. "/ChangeBlur.sh"))
 hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(scriptsDir .. "/GameMode.sh"))
-hl.bind(mainMod .. " + ALT + L", hl.dsp.exec_cmd(scriptsDir .. "/ChangeLayout.sh"))
+
+-- ═══════════════════════════════════════════════════════
+--  PURE LUA LAYOUT TOGGLE (Replaces ChangeLayout.sh)
+--  Works natively with Hyprland 0.55+ dynamic config updates
+-- ═══════════════════════════════════════════════════════
+local current_layout = "dwindle" -- Matches the default set in hl.config above
+local notif_icon = home .. "/.config/swaync/images/ja.png"
+
+local function toggle_layout()
+    if current_layout == "dwindle" then
+        current_layout = "master"
+        hl.config({ general = { layout = "master" } })
+        hl.dispatch(hl.dsp.exec_cmd("hyprctl keyword unbind SUPER, O"))
+        hl.dispatch(hl.dsp.exec_cmd('notify-send -u low -i "' .. notif_icon .. '" "Master Layout"'))
+    else
+        current_layout = "dwindle"
+        hl.config({ general = { layout = "dwindle" } })
+        hl.dispatch(hl.dsp.exec_cmd("hyprctl keyword bind SUPER, O, togglesplit"))
+        hl.dispatch(hl.dsp.exec_cmd('notify-send -u low -i "' .. notif_icon .. '" "Dwindle Layout"'))
+    end
+end
+
+hl.bind(mainMod .. " + ALT + L", toggle_layout)
+-- ═══════════════════════════════════════════════════════
+
 hl.bind(mainMod .. " + ALT + V", hl.dsp.exec_cmd(scriptsDir .. "/ClipManager.sh"))
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(UserScripts .. "/WallpaperSelect.sh"))
 hl.bind(mainMod .. " + SHIFT + W", hl.dsp.exec_cmd(UserScripts .. "/WallpaperEffects.sh"))
@@ -387,19 +302,19 @@ hl.bind("xf86AudioPrev", hl.dsp.exec_cmd(scriptsDir .. "/MediaCtrl.sh --prv"), {
 hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(scriptsDir .. "/ScreenShot.sh --now"))
 hl.bind(mainMod .. " + SHIFT + Print", hl.dsp.exec_cmd(scriptsDir .. "/ScreenShot.sh --area"))
 
--- Resize (converted from old resizeactive dispatcher)
+-- Resize
 hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.window.resize({ x = -50, y = 0, relative = true }), { repeating = true })
 hl.bind(mainMod .. " + SHIFT + right", hl.dsp.window.resize({ x = 50,  y = 0, relative = true }), { repeating = true })
 hl.bind(mainMod .. " + SHIFT + up",    hl.dsp.window.resize({ x = 0, y = -50, relative = true }), { repeating = true })
 hl.bind(mainMod .. " + SHIFT + down",  hl.dsp.window.resize({ x = 0, y = 50,  relative = true }), { repeating = true })
 
--- Move windows (converted from old movewindow dispatcher)
+-- Move windows
 hl.bind(mainMod .. " + CTRL + left",  hl.dsp.window.move({ direction = "l" }))
 hl.bind(mainMod .. " + CTRL + right", hl.dsp.window.move({ direction = "r" }))
 hl.bind(mainMod .. " + CTRL + up",    hl.dsp.window.move({ direction = "u" }))
 hl.bind(mainMod .. " + CTRL + down",  hl.dsp.window.move({ direction = "d" }))
 
--- Swap windows (converted from old swapwindow dispatcher)
+-- Swap windows
 hl.bind(mainMod .. " + ALT + left",  hl.dsp.window.swap({ direction = "l" }))
 hl.bind(mainMod .. " + ALT + right", hl.dsp.window.swap({ direction = "r" }))
 hl.bind(mainMod .. " + ALT + up",    hl.dsp.window.swap({ direction = "u" }))
@@ -412,10 +327,10 @@ hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
 hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
 
 -- Workspace navigation
-hl.bind(mainMod .. " + tab",       hl.dsp.focus({ workspace = "m+1" }))
+hl.bind(mainMod .. " + tab",         hl.dsp.focus({ workspace = "m+1" }))
 hl.bind(mainMod .. " + SHIFT + tab", hl.dsp.focus({ workspace = "m-1" }))
-hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
-hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+hl.bind(mainMod .. " + mouse_down",  hl.dsp.focus({ workspace = "e+1" }))
+hl.bind(mainMod .. " + mouse_up",    hl.dsp.focus({ workspace = "e-1" }))
 
 -- Special workspace
 hl.bind(mainMod .. " + SHIFT + U", hl.dsp.window.move({ workspace = "special" }))
@@ -426,7 +341,6 @@ for i = 1, 10 do
     local key = tostring(i % 10)
     hl.bind(mainMod .. " + " .. key, hl.dsp.focus({ workspace = tostring(i) }))
     hl.bind(mainMod .. " + SHIFT + " .. key, hl.dsp.window.move({ workspace = tostring(i) }))
-    -- Silent move: move window to target, ALWAYS switch back to current workspace
     local target = tostring(i)
     hl.bind(mainMod .. " + CTRL + " .. key, function()
         local aws = hl.get_active_workspace()
@@ -440,6 +354,6 @@ end
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
 hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
--- Keyboard layout switching (non_consuming so keys still reach apps like Zed)
+-- Keyboard layout switching
 hl.bind("ALT_L + SHIFT_L", hl.dsp.exec_cmd(scriptsDir .. "/SwitchKeyboardLayout.sh"), { locked = true, non_consuming = true })
 hl.bind("SHIFT_L + ALT_L", hl.dsp.exec_cmd(scriptsDir .. "/Tak0-Per-Window-Switch.sh"), { locked = true, non_consuming = true })
