@@ -75,12 +75,11 @@ hl.config({
         shadow = { enabled = true, range = 3, render_power = 1, color = "rgb(8D7272)" },
         blur = { enabled = true, size = 6, passes = 2, ignore_opacity = true, new_optimizations = true, special = true, popups = true },
     },
-    -- UPDATED: Added special_scale_factor
+
     dwindle = {
         preserve_split = true,
-        special_scale_factor = 0.8,
     },
-    -- UPDATED: Added new_status = "master" (modern replacement for new_is_master)
+    
     master = {
         new_status = "master",
         new_on_top = true,
